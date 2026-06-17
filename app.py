@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 from datetime import datetime, timedelta
+import os
 
 # --- PAGE CONFIGURATION ---
 st.set_page_config(
@@ -10,35 +11,59 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- SYSTEM STATE & INITIALIZATION (Simulating Live Cloud Database) ---
-if 'fleet_data' not in st.session_state:
-    try:
-        # Load your actual Fleet Master data sheet
-        df = pd.read_csv("rental business.xlsx - Fleet Master.csv")
-        # Clean any trailing spaces or hidden column anomalies
-        df.columns = df.columns.str.strip()
-        st.session_state.fleet_data = df
-    except FileNotFoundError:
-        # Emergency backup fallback data structure matching your exact data scheme
-        fallback_data = {
-            'Car ID': ['C001', 'C002', 'C003', 'C004', 'C005'],
-            'Make/Model': ['Toyota Camry', 'Honda Civic', 'Kia Sportage', 'Hyundai Elantra', 'Toyota Prius'],
-            'License Plate': ['01KG123ABC', '01KG567XYZ', '01KG999DEF', '01KG111GHI', '01KG444AAA'],
-            'Color': ['Silver', 'Blue', 'Black', 'White', 'White'],
-            'Status': ['Maintenance', 'Available', 'Available', 'Rented', 'Available'],
-            'Base Daily Rate ($)': [150, 120, 180, 140, 100],
-            'Override Status': ['Normal', 'Normal', 'Normal', 'Normal', 'Normal']
-        }
-        st.session_state.fleet_data = pd.DataFrame(fallback_data)
+DB_FILE = "rental business.xlsx - Fleet Master.csv"
+DEALS_FILE = "rental business.xlsx - Rental Deals Sheet.csv"
 
-if 'deals_data' not in st.session_state:
-    st.session_state.deals_data = pd.DataFrame(columns=[
-        'Deal ID', 'Client Name', 'Phone/WhatsApp', 'ID/Passport', 
-        'Rental Start Date', 'Rental End Date', 'Rental Days', 
-        'Car ID', 'Daily Rate', 'Total Amount', 'Payment Status'
-    ])
+# --- CORE DATABASE AUTO-SAVE ENGINES ---
+def load_fleet_database():
+    """Loads the live fleet spreadsheet from disk, or initializes state."""
+    if 'fleet_data' not in st.session_state:
+        if os.path.exists(DB_FILE):
+            df = pd.read_csv(DB_FILE)
+            df.columns = df.columns.str.strip()
+            # Ensure required columns exist
+            if 'Status' not in df.columns:
+                df['Status'] = 'Available'
+            st.session_state.fleet_data = df
+        else:
+            # Fallback initialization if file gets misplaced
+            fallback_data = {
+                'Car ID': ['C001', 'C002', 'C003', 'C004', 'C005'],
+                'Make/Model': ['Toyota Camry', 'Honda Civic', 'Kia Sportage', 'Hyundai Elantra', 'Toyota Prius'],
+                'License Plate': ['01KG123ABC', '01KG567XYZ', '01KG999DEF', '01KG111GHI', '01KG444AAA'],
+                'Color': ['Silver', 'Blue', 'Black', 'White', 'White'],
+                'Status': ['Maintenance', 'Available', 'Available', 'Rented', 'Available'],
+                'Base Daily Rate ($)': [150, 120, 180, 140, 100],
+                'Override Status': ['Normal', 'Normal', 'Normal', 'Normal', 'Normal']
+            }
+            st.session_state.fleet_data = pd.DataFrame(fallback_data)
+            st.session_state.fleet_data.to_csv(DB_FILE, index=False)
 
-# --- TOP UTILITIES (NAVIGATION AND VIEW SWITCHING) ---
+def save_fleet_database():
+    """Permanently commits browser session changes back to the actual CSV spreadsheet."""
+    st.session_state.fleet_data.to_csv(DB_FILE, index=False)
+
+def load_deals_database():
+    if 'deals_data' not in st.session_state:
+        if os.path.exists(DEALS_FILE):
+            df = pd.read_csv(DEALS_FILE)
+            df.columns = df.columns.str.strip()
+            st.session_state.deals_data = df
+        else:
+            st.session_state.deals_data = pd.DataFrame(columns=[
+                'Deal ID', 'Client Name', 'Phone/WhatsApp', 'ID/Passport', 
+                'Rental Start Date', 'Rental End Date', 'Rental Days', 
+                'Car ID', 'Daily Rate', 'Total Amount', 'Payment Status'
+            ])
+
+def save_deals_database():
+    st.session_state.deals_data.to_csv(DEALS_FILE, index=False)
+
+# Trigger initial database connection hooks
+load_fleet_database()
+load_deals_database()
+
+# --- INTERFACE NAVIGATION ---
 view_mode = st.radio(
     "Select Interface View", 
     ["🛎️ Front Desk Dashboard", "🛠️ Fleet Operations & Status Switcher"], 
@@ -46,12 +71,11 @@ view_mode = st.radio(
 )
 
 # ==============================================================================
-# VIEW 1: FRONT DESK DASHBOARD (IMITATES LANDING PAGE SHEET)
+# VIEW 1: FRONT DESK DASHBOARD (AVAILABILITY CHECKER & INTAKE FORM)
 # ==============================================================================
 if view_mode == "🛎️ Front Desk Dashboard":
     st.title("FRONT DESK: VEHICLE AVAILABILITY CHECKER")
     
-    # Split Layout for Input Controls vs Database Results Display Grid
     col_input, col_grid = st.columns([1, 2.5])
     
     with col_input:
@@ -59,33 +83,28 @@ if view_mode == "🛎️ Front Desk Dashboard":
         start_date = st.date_input("Start Date:", datetime.today())
         num_days = st.number_input("No. of Days:", min_value=1, max_value=90, value=5, step=1)
         
-        # Automatic continuous calculation of the end vector
         expected_return = start_date + timedelta(days=int(num_days))
         st.info(f"🔮 **Expected Return Date:** {expected_return.strftime('%Y-%m-%d')}")
         
-        # Pull live snapshot data to evaluate system states
+        # Read the current up-to-date state from the master session memory
         fleet_df = st.session_state.fleet_data
         
-        # Simple rule filtering: Cars must be explicitly marked 'Available'
+        # Filter for live deployment options
         available_cars = fleet_df[
-            (fleet_df['Status'].str.strip() == 'Available') & 
-            (~fleet_df['Override Status'].isin(['Maintenance', 'Out of Service']))
+            (fleet_df['Status'].astype(str).str.strip() == 'Available')
         ]
         
-        # Display the real-time calculated metrics badge
         st.metric(label="AVAILABLE VEHICLES MATCHED", value=len(available_cars))
 
     with col_grid:
         st.markdown("### 🚘 Dynamic Fleet Inventory Matrix")
         if len(available_cars) == 0:
-            st.warning("⚠️ No vehicles match the current query dates. Check adjustments or maintenance queues.")
+            st.warning("⚠️ No vehicles are currently marked as 'Available' in the Fleet database.")
         else:
-            # Reformat columns to show pricing options perfectly
             display_df = available_cars.copy()
             display_df['Price / Day'] = display_df['Base Daily Rate ($)']
             display_df['Total Price'] = display_df['Base Daily Rate ($)'] * num_days
             
-            # Print interactive workspace grid containing data subsets
             for index, row in display_df.iterrows():
                 with st.container(border=True):
                     c1, c2, c3, c4 = st.columns([1, 2, 1.5, 1])
@@ -98,7 +117,6 @@ if view_mode == "🛎️ Front Desk Dashboard":
                         st.markdown(f"Rate: **${row['Price / Day']}**/day")
                         st.markdown(f"Est. Total: **${row['Total Price']}**")
                     with c4:
-                        # Direct dynamic form popup generation trigger
                         if st.button("Book Car", key=f"book_{row['Car ID']}"):
                             st.session_state.selected_car = row
                             st.session_state.booking_days = num_days
@@ -106,7 +124,6 @@ if view_mode == "🛎️ Front Desk Dashboard":
                             st.session_state.booking_end = expected_return
                             st.session_state.show_form = True
 
-    # --- SIMPLIFIED DYNAMIC CLIENT QUESTIONNAIRE ---
     if st.session_state.get('show_form', False):
         car = st.session_state.selected_car
         total_price = car['Base Daily Rate ($)'] * st.session_state.booking_days
@@ -127,10 +144,8 @@ if view_mode == "🛎️ Front Desk Dashboard":
                 
             st.markdown(f"💰 **Financial Verification Check:** Base Rate: ${car['Base Daily Rate ($)']} | **Grand Total Due: ${total_price}**")
             
-            # Submission logic mapping
             if st.form_submit_button("Generate Active Rental Assignment"):
                 if client_name and client_phone:
-                    # 1. Update transactions database record log
                     deal_id = f"RENT-{datetime.today().strftime('%Y%m')}-{len(st.session_state.deals_data)+1:03d}"
                     new_deal = {
                         'Deal ID': deal_id, 'Client Name': client_name, 'Phone/WhatsApp': client_phone,
@@ -138,54 +153,78 @@ if view_mode == "🛎️ Front Desk Dashboard":
                         'Rental End Date': st.session_state.booking_end, 'Rental Days': st.session_state.booking_days,
                         'Car ID': car['Car ID'], 'Daily Rate': car['Base Daily Rate ($)'], 'Total Amount': total_price, 'Payment Status': 'Pending'
                     }
+                    # Save Contract record row
                     st.session_state.deals_data = pd.concat([st.session_state.deals_data, pd.DataFrame([new_deal])], ignore_index=True)
+                    save_deals_database()
                     
-                    # 2. Modify Fleet database entity status on the fly
+                    # Flip status and commit change directly to physical file
                     st.session_state.fleet_data.loc[st.session_state.fleet_data['Car ID'] == car['Car ID'], 'Status'] = 'Rented'
+                    save_fleet_database()
                     
-                    st.success(f"✔️ Contract successfully processed! Reference Generated: {deal_id}")
+                    st.success(f"✔️ Contract successfully processed and saved to database! Reference: {deal_id}")
                     st.session_state.show_form = False
                     st.rerun()
                 else:
-                    st.error("❌ Failed to process. Please complete Name and Contact phone entries before validation.")
+                    st.error("❌ Failed to process. Please complete Name and Contact entries.")
 
 # ==============================================================================
-# VIEW 2: FLEET OPERATIONS (IMITATES FLEET MASTER QUICK SWITCHER ACTIONS)
+# VIEW 2: FLEET OPERATIONS (DYNAMIC FLEET STATUS MANAGEMENT COMMANDS)
 # ==============================================================================
 else:
-    st.title("🛠️ FLEET OPERATIONS & QUICK STATUS SWITCHER")
-    st.markdown("Instantly switch vehicles between active deployment, maintenance, or storage lines below.")
+    st.title("🛠️ FLEET MASTER DATABASE MANAGER")
+    st.markdown("Use this panel to clear returned rental cars or toggle vehicles into maintenance lines permanently.")
     
-    # Render interactive controls block per grid asset
+    # Render interactive row control panel for EVERY car in the database file
     for index, row in st.session_state.fleet_data.iterrows():
-        status_color = "🟢" if row['Status'] == 'Available' else "🔴" if row['Status'] == 'Rented' else "🟡"
+        current_status = str(row['Status']).strip()
+        
+        # Pick dynamic visual accents based on real data
+        if current_status == 'Available':
+            status_badge = "🟢 Available"
+        elif current_status == 'Rented':
+            status_badge = "🔴 Out on Rent"
+        else:
+            status_badge = "🛠️ Maintenance / Workshop"
         
         with st.container(border=True):
-            o_c1, o_c2, o_c3, o_c4 = st.columns([1, 2, 1.5, 3])
+            o_c1, o_c2, o_c3, o_c4 = st.columns([1, 2, 2, 3])
             
             with o_c1:
                 st.markdown(f"### `{row['Car ID']}`")
             with o_c2:
                 st.markdown(f"**{row['Make/Model']}** ({row['Color']})")
-                st.caption(f"License Identification: {row['License Plate']}")
+                st.caption(f"License Plate: {row['License Plate']}")
             with o_c3:
-                st.markdown(f"Current Status: {status_color} **{row['Status']}**")
+                st.markdown(f"Current Row State:\n### {status_badge}")
             with o_c4:
-                # Layout action panel elements
                 action_col1, action_col2 = st.columns(2)
                 
                 with action_col1:
-                    # Condition validation logic step
-                    if row['Status'] != 'Available':
-                        if st.button("✅ Reset to Available", key=f"avail_{row['Car ID']}", use_container_width=True):
+                    # Render button to clear a vehicle if it is Rented or in Maintenance
+                    if current_status != 'Available':
+                        if st.button("✅ Make Available (Return)", key=f"avail_{row['Car ID']}", use_container_width=True):
                             st.session_state.fleet_data.at[index, 'Status'] = 'Available'
-                            st.session_state.fleet_data.at[index, 'Override Status'] = 'Normal'
-                            st.toast(f"{row['Car ID']} returned to active lineup!", icon="✅")
+                            if 'Override Status' in st.session_state.fleet_data.columns:
+                                st.session_state.fleet_data.at[index, 'Override Status'] = 'Normal'
+                            
+                            # CRITICAL STEP: Write back to spreadsheet on disk
+                            save_fleet_database()
+                            st.toast(f"Success: Database updated! {row['Car ID']} is back on the lot.", icon="✅")
                             st.rerun()
+                    else:
+                        st.button("✔️ Active on Lot", key=f"disabled_avail_{row['Car ID']}", disabled=True, use_container_width=True)
+                        
                 with action_col2:
-                    if row['Status'] != 'Maintenance':
+                    # Render button to send an active/rented car to maintenance
+                    if current_status != 'Maintenance':
                         if st.button("🛠️ Send to Maintenance", key=f"maint_{row['Car ID']}", use_container_width=True):
                             st.session_state.fleet_data.at[index, 'Status'] = 'Maintenance'
-                            st.session_state.fleet_data.at[index, 'Override Status'] = 'Maintenance'
-                            st.toast(f"{row['Car ID']} sent to repair queue.", icon="🛠️")
+                            if 'Override Status' in st.session_state.fleet_data.columns:
+                                st.session_state.fleet_data.at[index, 'Override Status'] = 'Maintenance'
+                            
+                            # CRITICAL STEP: Write back to spreadsheet on disk
+                            save_fleet_database()
+                            st.toast(f"Success: Database updated! {row['Car ID']} flagged for service.", icon="🛠️")
                             st.rerun()
+                    else:
+                        st.button("🔧 Currently in Workshop", key=f"disabled_maint_{row['Car ID']}", disabled=True, use_container_width=True)
